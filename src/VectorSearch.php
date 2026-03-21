@@ -78,13 +78,13 @@ class VectorSearch
 
         foreach ($nodes as $i => $node) {
             $dims = count($node['vector']);
-            $floatArr = @\FFI::new("float[{$dims}]", false);
+            $floatArr = $this->ffi->new("float[{$dims}]", false);
             foreach ($node['vector'] as $j => $v) {
                 $floatArr[$j] = $v;
             }
             $floatBuffers[] = $floatArr;
 
-            $labelBuf = LatticeLibrary::allocCString($node['label']);
+            $labelBuf = LatticeLibrary::allocCString($this->ffi, $node['label']);
             $labelBuffers[] = $labelBuf;
 
             $nodesArr[$i]->label = $labelBuf;

@@ -146,7 +146,7 @@ class LatticeLibrary
             $len = strlen($value);
             // Must use unmanaged memory (owned=false) — PHP FFI won't allow
             // assigning owned CData to a pointer field in a struct
-            $buf = @\FFI::new('char[' . ($len + 1) . ']', false);
+            $buf = $ffi->new('char[' . ($len + 1) . ']', false);
             FFI::memcpy($buf, $value, $len);
             $val->data->string_val->ptr = $buf;
             $val->data->string_val->len = $len;
@@ -220,10 +220,10 @@ class LatticeLibrary
     /**
      * Allocate a C string from a PHP string. Returns unmanaged memory — caller must FFI::free().
      */
-    public static function allocCString(string $value): CData
+    public static function allocCString(FFI $ffi, string $value): CData
     {
         $len = strlen($value);
-        $buf = @\FFI::new('char[' . ($len + 1) . ']', false);
+        $buf = $ffi->new('char[' . ($len + 1) . ']', false);
         FFI::memcpy($buf, $value, $len);
         $buf[$len] = "\0";
         return $buf;
