@@ -22,27 +22,29 @@ A Composer-installable PHP 8.1+ wrapper for [LatticeDB](https://github.com/jeffh
 
 **Four layers:**
 
-1. **LatticeLibrary** (`src/FFI/LatticeLibrary.php`) — thin 1:1 mapping of all 55 C API functions to PHP methods. Handles FFI loading, type conversion, pointer management. No business logic. Ships with `lattice.h` for `FFI::cdef()`.
+1. **LatticeLibrary** (`src/FFI/LatticeLibrary.php`) — thin 1:1 mapping of all 55 C API functions to PHP methods. Handles FFI loading, type conversion, pointer management. No business logic. Ships with `lattice.h` for `FFI::cdef()`. Uses `lattice_error_message()` internally to populate exception messages with human-readable C error strings.
 
 2. **Transaction** (`src/Transaction.php`) — wraps `begin/commit/rollback`. Provides access to `graph()`, `vectors()`, `fts()`, `query()` within transaction scope.
 
-3. **Domain APIs** — `Graph`, `VectorSearch`, `FullTextSearch`, `EmbeddingService`, `QueryBuilder` — each responsible for one domain. Accept a `LatticeLibrary` instance and optional transaction handle.
+3. **Domain APIs** — `Graph`, `VectorSearch`, `FullTextSearch`, `EmbeddingService`, `QueryBuilder` — each responsible for one domain. Constructed with a `LatticeLibrary` instance and a `lattice_database*` handle. Transaction-aware methods also receive a `lattice_txn*` handle. `$db->graph()` and `$txn->graph()` return separate instances configured with/without a transaction context. Methods that require a transaction throw `TransactionException` if called without one.
 
 4. **Database** (`src/Database.php`) — entry point. Opens/closes the database. Provides `transaction()`, `read()`, and convenience access to domain APIs with auto-commit transactions.
 
 ### Async readiness
 
-All domain API classes accept their dependencies via constructor injection. The `LatticeLibrary` is the sole FFI touchpoint. This makes it possible to later introduce an async adapter (Fibers, Swoole) at the `LatticeLibrary` level without changing upper layers.
+All domain API classes accept dependencies via constructor injection. The `LatticeLibrary` is the sole FFI touchpoint. The architecture does not prevent async adaptation, but true async would require running FFI calls in a thread pool (e.g., Swoole Task workers) and the `LatticeLibrary` interface may need to return promises/futures. The current design minimizes the blast radius of such changes but does not make them zero-cost.
 
 ## API Design
 
 ### Database & Transaction
 
 ```php
-// Open
+// Open (all lattice_open_options fields supported)
 $db = Database::open('mydb.ltdb', [
     'create' => true,
+    'read_only' => false,
     'cache_size_mb' => 256,
+    'page_size' => 4096,
     'enable_vector' => true,
     'vector_dimensions' => 384,
 ]);
@@ -70,6 +72,13 @@ try {
 // Queries without explicit transaction — auto read-only
 $results = $db->query('MATCH (n:Person) RETURN n.name')->rows();
 
+// Library version
+$version = Database::version(); // e.g. "0.3.0"
+
+// Query cache management
+$db->clearQueryCache();
+$stats = $db->queryCacheStats(); // QueryCacheStats DTO
+
 // Close (also called automatically via __destruct)
 $db->close();
 ```
@@ -81,6 +90,7 @@ $db->close();
 $nodeId = $txn->graph()->createNode('Person', ['name' => 'Alice', 'age' => 30]);
 $txn->graph()->addLabel($nodeId, 'Employee');
 $txn->graph()->removeLabel($nodeId, 'Employee');
+$labels = $txn->graph()->getLabels($nodeId); // ['Person', 'Employee']
 $txn->graph()->setProperty($nodeId, 'email', 'alice@test.com');
 $name = $txn->graph()->getProperty($nodeId, 'name');
 $txn->graph()->nodeExists($nodeId); // bool
@@ -97,6 +107,14 @@ $txn->graph()->deleteEdge($fromId, $toId, 'KNOWS');
 $outgoing = $txn->graph()->getOutgoingEdges($nodeId);
 $incoming = $txn->graph()->getIncomingEdges($nodeId);
 ```
+
+**Implementation notes:**
+
+- `createNode('Label', [...props])` is a convenience method that issues `lattice_node_create` + N `lattice_node_set_property` calls within the current transaction. If any property set fails, the exception propagates and the caller is responsible for rolling back the transaction.
+- `createEdge($from, $to, 'TYPE', [...props])` is similarly a compound operation: `lattice_edge_create` + N `lattice_edge_set_property` calls.
+- `getLabels()` calls `lattice_node_get_labels`, splits the comma-separated result, frees the C string with `lattice_free_string`, returns `string[]`.
+- Edge result iteration calls both `lattice_edge_result_get_id` and `lattice_edge_result_get` per index to fully populate the `EdgeDTO`.
+- The C API has no `lattice_node_remove_property` — only edges support property removal. This asymmetry mirrors the C API; to "remove" a node property, set it to null.
 
 ### Query
 
@@ -127,7 +145,7 @@ foreach ($db->query('...')->cursor() as $row) { }
 $db->transaction(function (Transaction $txn) {
     $txn->query('CREATE (n:Person {name: $name})')
         ->bind('name', 'Charlie')
-        ->execute();
+        ->execute(); // returns void
 });
 ```
 
@@ -171,11 +189,13 @@ $results = $db->fts()->searchFuzzy('serch qury',
 $vector = $db->embeddings()->hash('text', dimensions: 128);
 
 // Remote embedding client (Ollama/OpenAI)
-$client = $db->embeddings()->createClient([
-    'endpoint' => 'http://localhost:11434',
-    'model' => 'nomic-embed-text',
-    'api_format' => 'ollama',
-]);
+$client = $db->embeddings()->createClient(
+    endpoint: 'http://localhost:11434',
+    model: 'nomic-embed-text',
+    apiFormat: EmbeddingApiFormat::Ollama,
+    apiKey: null,
+    timeoutMs: 5000,
+);
 $vector = $client->embed('text');
 $client->close();
 ```
@@ -205,6 +225,14 @@ readonly class FtsMatch {
     public function __construct(
         public int $nodeId,
         public float $score,
+    ) {}
+}
+
+readonly class QueryCacheStats {
+    public function __construct(
+        public int $entries,
+        public int $hits,
+        public int $misses,
     ) {}
 }
 ```
@@ -237,6 +265,11 @@ enum ErrorCode: int {
     case OutOfMemory = -13;
     case Unsupported = -14;
 }
+
+enum EmbeddingApiFormat: int {
+    case Ollama = 0;
+    case OpenAI = 1;
+}
 ```
 
 ## Error Handling
@@ -245,22 +278,29 @@ Exception hierarchy:
 
 ```
 LatticeException (abstract)
-├── ConnectionException        — open/close failures
-├── TransactionException       — begin/commit/rollback, aborted, lock timeout
+├── ConnectionException        — open/close, version mismatch
+├── TransactionException       — begin/commit/rollback, aborted, lock timeout, read-only violations
 ├── QueryException             — prepare/execute with diagnostics
 ├── NotFoundException          — node/edge not found
+├── AlreadyExistsException     — duplicate node/edge
 ├── CorruptionException        — data corruption, checksum
 └── IOException                — file I/O errors
 ```
 
 C error code mapping:
 - `LATTICE_ERROR_NOT_FOUND` → `NotFoundException`
+- `LATTICE_ERROR_ALREADY_EXISTS` → `AlreadyExistsException`
 - `LATTICE_ERROR_CORRUPTION`, `LATTICE_ERROR_CHECKSUM` → `CorruptionException`
 - `LATTICE_ERROR_IO` → `IOException`
-- `LATTICE_ERROR_TXN_ABORTED`, `LATTICE_ERROR_LOCK_TIMEOUT` → `TransactionException`
-- All others → `LatticeException`
+- `LATTICE_ERROR_TXN_ABORTED`, `LATTICE_ERROR_LOCK_TIMEOUT`, `LATTICE_ERROR_READ_ONLY` → `TransactionException`
+- `LATTICE_ERROR_VERSION_MISMATCH` → `ConnectionException`
+- `LATTICE_ERROR_INVALID_ARG` → `\InvalidArgumentException`
+- `LATTICE_ERROR_OUT_OF_MEMORY` → `LatticeException` (unrecoverable, no special subclass needed)
+- All others (`ERROR`, `FULL`, `UNSUPPORTED`) → `LatticeException`
 
-`QueryException` includes diagnostics: `getStage()`, `getErrorCode()`, `getLine()`, `getColumn()`, `getLength()`.
+All exceptions include the human-readable message from `lattice_error_message()` and the `ErrorCode` enum value.
+
+`QueryException` includes diagnostics: `getStage()`, `getQueryErrorCode()`, `getLine()`, `getColumn()`, `getLength()`.
 
 ## Memory Management
 
@@ -271,10 +311,13 @@ The PHP wrapper takes full ownership of C memory lifecycle:
 - `QueryBuilder` frees query and result handles after consumption
 - `cursor()` frees result on iterator exhaustion or when the cursor object is destroyed
 - `EmbeddingClient::__destruct()` calls `lattice_embedding_client_free()`
-- Values from `lattice_node_get_property()` are freed after converting to PHP types
+- Values from `lattice_node_get_property()` are freed with `lattice_value_free()` after converting to PHP types
 - Values from `lattice_result_get()` are borrowed — NOT freed (valid until result_free)
 - Labels from `lattice_node_get_labels()` freed with `lattice_free_string()` after converting
 - Hash embeddings freed with `lattice_hash_embed_free()` after converting to PHP array
+- Edge results freed with `lattice_edge_result_free()` after converting to `EdgeDTO[]`
+- Vector results freed with `lattice_vector_result_free()` after converting to `VectorMatch[]`
+- FTS results freed with `lattice_fts_result_free()` after converting to `FtsMatch[]`
 
 ## PHP Value ↔ C Value Conversion
 
@@ -309,16 +352,19 @@ latticedb-wrapper/
 │   ├── DTO/
 │   │   ├── EdgeDTO.php
 │   │   ├── VectorMatch.php
-│   │   └── FtsMatch.php
+│   │   ├── FtsMatch.php
+│   │   └── QueryCacheStats.php
 │   ├── Enum/
 │   │   ├── QueryStage.php
-│   │   └── ErrorCode.php
+│   │   ├── ErrorCode.php
+│   │   └── EmbeddingApiFormat.php
 │   └── Exception/
 │       ├── LatticeException.php
 │       ├── ConnectionException.php
 │       ├── TransactionException.php
 │       ├── QueryException.php
 │       ├── NotFoundException.php
+│       ├── AlreadyExistsException.php
 │       ├── CorruptionException.php
 │       └── IOException.php
 ├── tests/
@@ -332,14 +378,20 @@ latticedb-wrapper/
 The `LatticeLibrary` searches for `liblattice` in this order:
 1. `LATTICE_LIB_PATH` environment variable
 2. Project-local `lib/` directory
-3. Homebrew paths (macOS): `/opt/homebrew/lib`, `/usr/local/opt/latticedb/lib`
-4. System paths: `/usr/local/lib`, `/usr/lib`
+3. Development build `zig-out/lib/`
+4. Homebrew paths (macOS): `/opt/homebrew/lib`, `/usr/local/opt/latticedb/lib`
+5. System paths: `/usr/local/lib`, `/usr/lib`, `~/.local/lib`
+
+Platform-specific library file names:
+- macOS: `liblattice.dylib`
+- Linux: `liblattice.so`
+- Windows: `lattice.dll` (not actively tested)
 
 ## Constraints & Decisions
 
 - **PHP 8.1+** required (enums, readonly, fibers support)
 - **No ORM layer** — fluent API with raw Cypher, DTOs for structured results
-- **Synchronous** initially, architecture allows async adapter at LatticeLibrary level
+- **Synchronous** initially, architecture minimizes blast radius of future async adaptation
 - **Namespace**: `LatticeDB\`
 - **Package name**: `latticedb/latticedb` (Composer)
 - **PSR-4** autoloading
