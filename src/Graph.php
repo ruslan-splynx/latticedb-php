@@ -51,7 +51,7 @@ class Graph
         $err = $this->ffi->lattice_node_get_labels($this->requireTxn(), $nodeId, FFI::addr($labelsPtr));
         LatticeLibrary::checkError($this->ffi, $err, 'Failed to get labels');
 
-        $labels = FFI::string($labelsPtr);
+        $labels = LatticeLibrary::toPhpString($labelsPtr);
         $this->ffi->lattice_free_string($labelsPtr);
 
         if ($labels === '') {
@@ -64,7 +64,7 @@ class Graph
     {
         [$val, $bufs] = LatticeLibrary::phpToValue($this->ffi, $value);
         $err = $this->ffi->lattice_node_set_property($this->requireTxn(), $nodeId, $key, FFI::addr($val));
-        unset($bufs);
+        LatticeLibrary::freeBuffers($bufs);
         LatticeLibrary::checkError($this->ffi, $err, "Failed to set property '{$key}'");
     }
 
@@ -112,7 +112,7 @@ class Graph
     {
         [$val, $bufs] = LatticeLibrary::phpToValue($this->ffi, $value);
         $err = $this->ffi->lattice_edge_set_property($this->requireTxn(), $edgeId, $key, FFI::addr($val));
-        unset($bufs);
+        LatticeLibrary::freeBuffers($bufs);
         LatticeLibrary::checkError($this->ffi, $err, "Failed to set edge property '{$key}'");
     }
 
@@ -172,11 +172,18 @@ class Graph
             $typeLen = $this->ffi->new('uint32_t');
             $this->ffi->lattice_edge_result_get($resultPtr, $i, FFI::addr($source), FFI::addr($target), FFI::addr($typePtr), FFI::addr($typeLen));
 
+            $edgeType = LatticeLibrary::toPhpString($typePtr);
+            if (is_string($typePtr)) {
+                $edgeType = substr($typePtr, 0, (int) $typeLen->cdata);
+            } else {
+                $edgeType = FFI::string($typePtr, (int) $typeLen->cdata);
+            }
+
             $edges[] = new EdgeDTO(
                 (int) $edgeId->cdata,
                 (int) $source->cdata,
                 (int) $target->cdata,
-                FFI::string($typePtr, (int) $typeLen->cdata),
+                $edgeType,
             );
         }
 

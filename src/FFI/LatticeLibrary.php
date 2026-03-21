@@ -83,7 +83,7 @@ class LatticeLibrary
         }
 
         $errorCode = ErrorCode::tryFrom($code) ?? ErrorCode::Error;
-        $msg = FFI::string($ffi->lattice_error_message($code));
+        $msg = self::toPhpString($ffi->lattice_error_message($code));
         if ($context !== '') {
             $msg = "{$context}: {$msg}";
         }
@@ -100,9 +100,9 @@ class LatticeLibrary
         $errorCode = ErrorCode::tryFrom($code) ?? ErrorCode::Error;
         $stage = QueryStage::tryFrom($ffi->lattice_query_last_error_stage($query)) ?? QueryStage::None;
         $msgPtr = $ffi->lattice_query_last_error_message($query);
-        $msg = $msgPtr !== null ? FFI::string($msgPtr) : 'Unknown query error';
+        $msg = ($msgPtr !== null) ? self::toPhpString($msgPtr) : 'Unknown query error';
         $qCode = $ffi->lattice_query_last_error_code($query);
-        $queryErrorCode = $qCode !== null ? FFI::string($qCode) : null;
+        $queryErrorCode = ($qCode !== null) ? self::toPhpString($qCode) : null;
 
         $queryLine = null;
         $queryColumn = null;
@@ -144,8 +144,9 @@ class LatticeLibrary
         } elseif (is_string($value)) {
             $val->type = 4; // LATTICE_VALUE_STRING
             $len = strlen($value);
-            // PHP-managed buffer — lives as long as $buffers reference is held
-            $buf = $ffi->new('char[' . ($len + 1) . ']');
+            // Must use unmanaged memory (owned=false) — PHP FFI won't allow
+            // assigning owned CData to a pointer field in a struct
+            $buf = @\FFI::new('char[' . ($len + 1) . ']', false);
             FFI::memcpy($buf, $value, $len);
             $val->data->string_val->ptr = $buf;
             $val->data->string_val->len = $len;
@@ -157,6 +158,32 @@ class LatticeLibrary
         return [$val, $buffers];
     }
 
+    /**
+     * Free unmanaged buffers returned by phpToValue().
+     * @param array<CData> $buffers
+     */
+    public static function freeBuffers(array $buffers): void
+    {
+        foreach ($buffers as $buf) {
+            FFI::free($buf);
+        }
+    }
+
+    /**
+     * Safely convert an FFI return value to a PHP string.
+     * PHP 8.5+ may auto-convert const char* returns to PHP strings.
+     */
+    public static function toPhpString(mixed $value): string
+    {
+        if (is_string($value)) {
+            return $value;
+        }
+        if ($value instanceof CData) {
+            return FFI::string($value);
+        }
+        return (string) $value;
+    }
+
     public static function valueToPhp(FFI $ffi, CData $val): mixed
     {
         return match ($val->type) {
@@ -164,11 +191,20 @@ class LatticeLibrary
             1 => (bool) $val->data->bool_val, // BOOL
             2 => (int) $val->data->int_val, // INT
             3 => (float) $val->data->float_val, // FLOAT
-            4 => FFI::string($val->data->string_val->ptr, $val->data->string_val->len), // STRING
-            5 => FFI::string($val->data->bytes_val->ptr, $val->data->bytes_val->len), // BYTES
+            4 => self::extractString($val->data->string_val->ptr, $val->data->string_val->len), // STRING
+            5 => self::extractString($val->data->bytes_val->ptr, $val->data->bytes_val->len), // BYTES
             6 => self::vectorToPhpArray($val), // VECTOR
             default => throw new \RuntimeException("Unknown lattice_value type: {$val->type}"),
         };
+    }
+
+    private static function extractString(mixed $ptr, int $len): string
+    {
+        // PHP 8.5+ may auto-convert const char* to PHP string
+        if (is_string($ptr)) {
+            return substr($ptr, 0, $len);
+        }
+        return FFI::string($ptr, $len);
     }
 
     private static function vectorToPhpArray(CData $val): array
@@ -179,5 +215,17 @@ class LatticeLibrary
             $result[] = $val->data->vector_val->ptr[$i];
         }
         return $result;
+    }
+
+    /**
+     * Allocate a C string from a PHP string. Returns unmanaged memory — caller must FFI::free().
+     */
+    public static function allocCString(string $value): CData
+    {
+        $len = strlen($value);
+        $buf = @\FFI::new('char[' . ($len + 1) . ']', false);
+        FFI::memcpy($buf, $value, $len);
+        $buf[$len] = "\0";
+        return $buf;
     }
 }

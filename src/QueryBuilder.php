@@ -88,7 +88,7 @@ class QueryBuilder
                 $colCount = $this->ffi->lattice_result_column_count($resultPtr);
                 $row = [];
                 for ($i = 0; $i < $colCount; $i++) {
-                    $colName = FFI::string($this->ffi->lattice_result_column_name($resultPtr, $i));
+                    $colName = LatticeLibrary::toPhpString($this->ffi->lattice_result_column_name($resultPtr, $i));
                     $val = $this->ffi->new('lattice_value');
                     $err = $this->ffi->lattice_result_get($resultPtr, $i, FFI::addr($val));
                     LatticeLibrary::checkError($this->ffi, $err, "Failed to get column {$i}");
@@ -134,7 +134,7 @@ class QueryBuilder
         foreach ($this->bindings as $name => $value) {
             [$val, $bufs] = LatticeLibrary::phpToValue($this->ffi, $value);
             $err = $this->ffi->lattice_query_bind($queryPtr, $name, FFI::addr($val));
-            unset($bufs);
+            LatticeLibrary::freeBuffers($bufs);
             LatticeLibrary::checkError($this->ffi, $err, "Failed to bind parameter '{$name}'");
         }
 

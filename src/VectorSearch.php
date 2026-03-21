@@ -73,17 +73,21 @@ class VectorSearch
         $count = count($nodes);
 
         $nodesArr = $this->ffi->new("lattice_node_with_vector[{$count}]");
-        $floatBuffers = []; // Keep references to prevent GC
+        $floatBuffers = []; // Keep float array references alive
+        $labelBuffers = []; // Unmanaged C strings — must free
 
         foreach ($nodes as $i => $node) {
             $dims = count($node['vector']);
-            $floatArr = $this->ffi->new("float[{$dims}]");
+            $floatArr = @\FFI::new("float[{$dims}]", false);
             foreach ($node['vector'] as $j => $v) {
                 $floatArr[$j] = $v;
             }
             $floatBuffers[] = $floatArr;
 
-            $nodesArr[$i]->label = $node['label'];
+            $labelBuf = LatticeLibrary::allocCString($node['label']);
+            $labelBuffers[] = $labelBuf;
+
+            $nodesArr[$i]->label = $labelBuf;
             $nodesArr[$i]->vector = $floatArr;
             $nodesArr[$i]->dimensions = $dims;
         }
@@ -91,6 +95,8 @@ class VectorSearch
         $nodeIds = $this->ffi->new("lattice_node_id[{$count}]");
         $countOut = $this->ffi->new('uint32_t');
         $err = $this->ffi->lattice_batch_insert($txn, $nodesArr, $count, $nodeIds, FFI::addr($countOut));
+        LatticeLibrary::freeBuffers($labelBuffers);
+        LatticeLibrary::freeBuffers($floatBuffers);
         LatticeLibrary::checkError($this->ffi, $err, 'Batch insert failed');
 
         $result = [];

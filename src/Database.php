@@ -68,7 +68,7 @@ class Database
     public static function version(): string
     {
         $ffi = LatticeLibrary::ffiInstance();
-        return FFI::string($ffi->lattice_version());
+        return LatticeLibrary::toPhpString($ffi->lattice_version());
     }
 
     public function transaction(callable $callback): mixed
