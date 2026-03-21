@@ -1,0 +1,5 @@
+/vendor/
+*.ltdb
+*.ltdb-wal
+*.ltdb-shm
+.phpunit.result.cache
