@@ -14,14 +14,13 @@ PHP 8.1+ FFI wrapper for [LatticeDB](https://github.com/jeffhajewski/latticedb) 
 composer require latticedb/latticedb
 ```
 
-Set the library path:
+The package ships with a pre-built `liblattice.so` for Linux x86_64 in the `lib/` directory — it works out of the box, no extra setup needed.
+
+For other platforms or custom builds, set `LATTICE_LIB_PATH`:
 
 ```bash
-export LATTICE_LIB_PATH=/path/to/liblattice.dylib  # macOS
-export LATTICE_LIB_PATH=/path/to/liblattice.so      # Linux
+export LATTICE_LIB_PATH=/path/to/liblattice.dylib
 ```
-
-Or place the library in one of the auto-discovered paths: `/usr/local/lib`, `/opt/homebrew/lib`, or the project's `lib/` directory.
 
 ## Quick Start
 
@@ -256,9 +255,9 @@ Exception hierarchy:
 | `CorruptionException` | data corruption, checksum failure |
 | `IOException` | file I/O errors |
 
-## Building liblattice
+## Building liblattice from Source
 
-Requires [Zig](https://ziglang.org/):
+Only needed for non-Linux platforms or if you want a newer version. Requires [Zig](https://ziglang.org/):
 
 ```bash
 git clone https://github.com/jeffhajewski/latticedb.git
@@ -273,11 +272,11 @@ zig build -Doptimize=ReleaseFast
 # Unit tests (no liblattice required)
 ./vendor/bin/phpunit tests/Unit/
 
-# Integration tests (requires liblattice)
-LATTICE_LIB_PATH=/path/to/liblattice.dylib ./vendor/bin/phpunit tests/Integration/
+# Integration tests (Linux — uses bundled lib automatically)
+./vendor/bin/phpunit tests/Integration/
 
-# All tests
-LATTICE_LIB_PATH=/path/to/liblattice.dylib ./vendor/bin/phpunit
+# Integration tests (macOS/other — specify lib path)
+LATTICE_LIB_PATH=/path/to/liblattice.dylib ./vendor/bin/phpunit tests/Integration/
 ```
 
 ## License
