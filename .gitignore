@@ -3,3 +3,4 @@
 *.ltdb-wal
 *.ltdb-shm
 .phpunit.result.cache
+.DS_Store
