@@ -7,8 +7,9 @@
  *   1. Batch Insert 10k (various batch sizes)
  *   2. Search Latency (200 queries x 3 passes)
  *   3. Recall@10 (multiple efSearch values to find optimal)
- *   4. Single Insert 1000
- *   5. Resource Usage
+ *   4. Full-Text Search (index 10k + search + fuzzy)
+ *   5. Single Insert 1000
+ *   6. Resource Usage
  *
  * Usage: php benchmark/latticedb_benchmark.php
  */
@@ -201,10 +202,74 @@ foreach ($efSearchValues as $ef) {
 $results['tests']['recall'] = $recallResults;
 
 // ============================================================================
-// Test 4: Single Insert 1000
+// Test 4: Full-Text Search
 // ============================================================================
 
-section("Test 4: Single Insert (1000 records one-at-a-time)");
+section("Test 4: Full-Text Search (10k docs)");
+
+echo "Indexing 10k records for FTS... ";
+$start = timer_start();
+$recordToNode = array_flip($nodeToRecord);
+foreach (array_chunk($dataset, 1000) as $batch) {
+    $db->transaction(function ($txn) use ($batch, $recordToNode) {
+        foreach ($batch as $r) {
+            if (isset($recordToNode[$r['id']])) {
+                $txn->fts()->index($recordToNode[$r['id']], $r['text']);
+            }
+        }
+    });
+}
+$ftsIndexTime = timer_s($start);
+printf("done (%.1fs, %.2fms/doc)\n\n", $ftsIndexTime, $ftsIndexTime / count($dataset) * 1000);
+
+$ftsQueries = ['internet connection problems', 'billing payment issue', 'router hardware failure',
+    'wifi signal weak', 'speed test slow', 'fiber optic installation',
+    'email not working', 'VoIP phone no dial tone', 'DNS resolution error', 'contract cancellation',
+    'modem keeps restarting', 'plan upgrade options', 'static IP address setup',
+    'customer portal login', 'TV channels freezing', 'network outage in area',
+    'slow download speed', 'fiber cable damaged', 'cancel my contract', 'mobile data not working'];
+
+$ftsLatencies = [];
+foreach ($ftsQueries as $fq) {
+    $t = timer_start();
+    $ftsResults = $db->fts()->search($fq, limit: 10);
+    $ftsLatencies[] = timer_ms($t);
+}
+
+sort($ftsLatencies);
+printf("  FTS search (20 queries):\n");
+printf("    p50=%.2fms  p95=%.2fms  avg=%.2fms\n",
+    percentile($ftsLatencies, 50), percentile($ftsLatencies, 95),
+    array_sum($ftsLatencies) / count($ftsLatencies));
+
+// Fuzzy search
+$fuzzyLatencies = [];
+$fuzzyQueries = ['intenet conection', 'billin paymnt', 'routr hardwre', 'wfi sgnl', 'spd tst'];
+foreach ($fuzzyQueries as $fq) {
+    $t = timer_start();
+    $db->fts()->searchFuzzy($fq, limit: 10, maxDistance: 2, minTermLength: 4);
+    $fuzzyLatencies[] = timer_ms($t);
+}
+sort($fuzzyLatencies);
+printf("  Fuzzy search (5 queries):\n");
+printf("    p50=%.2fms  p95=%.2fms  avg=%.2fms\n",
+    percentile($fuzzyLatencies, 50), percentile($fuzzyLatencies, 95),
+    array_sum($fuzzyLatencies) / count($fuzzyLatencies));
+
+$results['tests']['fts'] = [
+    'index_time_s' => round($ftsIndexTime, 2),
+    'index_ms_per_doc' => round($ftsIndexTime / count($dataset) * 1000, 2),
+    'search_p50_ms' => round(percentile($ftsLatencies, 50), 2),
+    'search_p95_ms' => round(percentile($ftsLatencies, 95), 2),
+    'fuzzy_p50_ms' => round(percentile($fuzzyLatencies, 50), 2),
+    'fuzzy_p95_ms' => round(percentile($fuzzyLatencies, 95), 2),
+];
+
+// ============================================================================
+// Test 5: Single Insert 1000
+// ============================================================================
+
+section("Test 5: Single Insert (1000 records one-at-a-time)");
 
 $singleLatencies = [];
 $start = timer_start();
@@ -237,7 +302,7 @@ $results['tests']['single_insert'] = [
 // Test 5: Resource Usage
 // ============================================================================
 
-section("Test 5: Resource Usage");
+section("Test 6: Resource Usage");
 
 $dbFiles = glob(DB_PATH . '*');
 $diskUsage = 0;
@@ -278,6 +343,9 @@ printf("  Search p95 (ef=200):    %.2f ms\n", $results['tests']['search_latency'
 foreach ($recallResults as $ef => $recall) {
     printf("  Recall@10 %-12s  %.4f\n", "({$ef}):", $recall);
 }
+printf("  FTS index:              %.2f ms/doc\n", $results['tests']['fts']['index_ms_per_doc']);
+printf("  FTS search p50:         %.2f ms\n", $results['tests']['fts']['search_p50_ms']);
+printf("  FTS fuzzy p50:          %.2f ms\n", $results['tests']['fts']['fuzzy_p50_ms']);
 printf("  Single insert p95:      %.2f ms\n", $results['tests']['single_insert']['p95_ms']);
 printf("  Database size:          %s\n", format_bytes($diskUsage));
 printf("  PHP peak memory:        %s\n", format_bytes($phpMemory));
