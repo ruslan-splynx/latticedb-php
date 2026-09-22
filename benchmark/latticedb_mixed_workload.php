@@ -38,6 +38,9 @@ $db = Database::open(DB_PATH, [
     'vector_dimensions' => $dims,
 ]);
 
+// Since LatticeDB 0.15 FTS indexes a declared (label, property); writing the property indexes it.
+$db->fts()->createIndex('Ticket', 'body');
+
 $totalInserted = 0;
 $nodeToRecord = [];
 $rounds = 3;
@@ -122,7 +125,7 @@ for ($round = 1; $round <= $rounds; $round++) {
         $db->transaction(function ($txn) use ($batch, $recordToNode) {
             foreach ($batch as $r) {
                 if (isset($recordToNode[$r['id']])) {
-                    $txn->fts()->index($recordToNode[$r['id']], $r['text']);
+                    $txn->graph()->setProperty($recordToNode[$r['id']], 'body', $r['text']);
                 }
             }
         });
@@ -140,7 +143,7 @@ for ($round = 1; $round <= $rounds; $round++) {
     $ftsResultCounts = [];
     foreach ($ftsQueries as $fq) {
         $t = timer_start();
-        $results = $db->fts()->search($fq, limit: 10);
+        $results = $db->fts()->search('Ticket', 'body', $fq, limit: 10);
         $ftsLatencies[] = timer_ms($t);
         $ftsResultCounts[] = count($results);
     }
@@ -155,7 +158,7 @@ for ($round = 1; $round <= $rounds; $round++) {
     $fuzzyLatencies = [];
     foreach ($fuzzyQueries as $fq) {
         $t = timer_start();
-        $db->fts()->searchFuzzy($fq, limit: 10, maxDistance: 2, minTermLength: 4);
+        $db->fts()->searchFuzzy('Ticket', 'body', $fq, limit: 10, maxDistance: 2, minTermLength: 4);
         $fuzzyLatencies[] = timer_ms($t);
     }
     sort($fuzzyLatencies);
@@ -215,12 +218,12 @@ printf("p50=%.2fms p95=%.2fms\n", percentile($latencies, 50), percentile($latenc
 
 // FTS search
 echo "  [FTS Search] after reopen... ";
-$results = $db->fts()->search('internet connection problems', limit: 10);
+$results = $db->fts()->search('Ticket', 'body', 'internet connection problems', limit: 10);
 printf("%d results\n", count($results));
 
 // FTS fuzzy
 echo "  [FTS Fuzzy] after reopen... ";
-$results = $db->fts()->searchFuzzy('intenet conection', limit: 10, maxDistance: 2, minTermLength: 4);
+$results = $db->fts()->searchFuzzy('Ticket', 'body', 'intenet conection', limit: 10, maxDistance: 2, minTermLength: 4);
 printf("%d results\n", count($results));
 
 // Graph read

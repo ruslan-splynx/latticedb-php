@@ -28,7 +28,9 @@ typedef enum {
     LATTICE_ERROR_VERSION_MISMATCH = -11,
     LATTICE_ERROR_CHECKSUM = -12,
     LATTICE_ERROR_OUT_OF_MEMORY = -13,
-    LATTICE_ERROR_UNSUPPORTED = -14
+    LATTICE_ERROR_UNSUPPORTED = -14,
+    LATTICE_ERROR_VALUE_TOO_LARGE = -15,
+    LATTICE_ERROR_DATABASE_LOCKED = -16
 } lattice_error;
 
 // Value types
@@ -39,7 +41,9 @@ typedef enum {
     LATTICE_VALUE_FLOAT = 3,
     LATTICE_VALUE_STRING = 4,
     LATTICE_VALUE_BYTES = 5,
-    LATTICE_VALUE_VECTOR = 6
+    LATTICE_VALUE_VECTOR = 6,
+    LATTICE_VALUE_LIST = 7,
+    LATTICE_VALUE_MAP = 8
 } lattice_value_type;
 
 // Transaction modes
@@ -63,8 +67,23 @@ typedef enum {
     LATTICE_QUERY_STAGE_EXECUTION = 4
 } lattice_query_error_stage;
 
-// Value struct — tagged union
-typedef struct {
+// Value struct — tagged union (LIST/MAP nest through pointers)
+typedef struct lattice_value lattice_value;
+typedef struct lattice_list lattice_list;
+typedef struct lattice_map_entry lattice_map_entry;
+typedef struct lattice_map lattice_map;
+
+struct lattice_list {
+    lattice_value* items;
+    size_t len;
+};
+
+struct lattice_map {
+    lattice_map_entry* entries;
+    size_t len;
+};
+
+struct lattice_value {
     lattice_value_type type;
     union {
         bool bool_val;
@@ -73,8 +92,16 @@ typedef struct {
         struct { const char* ptr; size_t len; } string_val;
         struct { const uint8_t* ptr; size_t len; } bytes_val;
         struct { const float* ptr; uint32_t dimensions; } vector_val;
+        lattice_list* list_val;
+        lattice_map* map_val;
     } data;
-} lattice_value;
+};
+
+struct lattice_map_entry {
+    const char* key;
+    size_t key_len;
+    lattice_value value;
+};
 
 // Open options
 typedef struct {
@@ -147,9 +174,13 @@ lattice_error lattice_vector_result_get(lattice_vector_result* result, uint32_t 
 void lattice_vector_result_free(lattice_vector_result* result);
 
 // Full-text search
-lattice_error lattice_fts_index(lattice_txn* txn, lattice_node_id node_id, const char* text, size_t text_len);
-lattice_error lattice_fts_search(lattice_database* db, const char* query, size_t query_len, uint32_t limit, lattice_fts_result** result_out);
-lattice_error lattice_fts_search_fuzzy(lattice_database* db, const char* query, size_t query_len, uint32_t limit, uint32_t max_distance, uint32_t min_term_length, lattice_fts_result** result_out);
+lattice_error lattice_node_fts_index_create(lattice_database* db, const char* label, const char* property);
+lattice_error lattice_node_fts_index_drop(lattice_database* db, const char* label, const char* property);
+lattice_error lattice_node_fts_index_exists(lattice_database* db, const char* label, const char* property, bool* exists_out);
+lattice_error lattice_fts_search(lattice_database* db, const char* label, const char* property, const char* query, size_t query_len, uint32_t limit, lattice_fts_result** result_out);
+lattice_error lattice_fts_search_txn(lattice_txn* txn, const char* label, const char* property, const char* query, size_t query_len, uint32_t limit, lattice_fts_result** result_out);
+lattice_error lattice_fts_search_fuzzy(lattice_database* db, const char* label, const char* property, const char* query, size_t query_len, uint32_t limit, uint32_t max_distance, uint32_t min_term_length, lattice_fts_result** result_out);
+lattice_error lattice_fts_search_fuzzy_txn(lattice_txn* txn, const char* label, const char* property, const char* query, size_t query_len, uint32_t limit, uint32_t max_distance, uint32_t min_term_length, lattice_fts_result** result_out);
 uint32_t lattice_fts_result_count(lattice_fts_result* result);
 lattice_error lattice_fts_result_get(lattice_fts_result* result, uint32_t index, lattice_node_id* node_id_out, float* score_out);
 void lattice_fts_result_free(lattice_fts_result* result);

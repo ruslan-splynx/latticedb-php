@@ -20,6 +20,7 @@ const DB_PATH = __DIR__ . '/data/fts_stress.ltdb';
 foreach (glob(DB_PATH . '*') as $f) @unlink($f);
 
 $db = Database::open(DB_PATH, ['create' => true]);
+$db->fts()->createIndex('Doc', 'body');
 
 // ============================================================================
 // Test 1: Reproduce their unit test — 20 documents (should pass)
@@ -30,13 +31,12 @@ section("Test 1: 20 documents (reproducing upstream unit test)");
 $nodeIds = [];
 $db->transaction(function ($txn) use (&$nodeIds) {
     for ($i = 1; $i <= 20; $i++) {
-        $nodeId = $txn->graph()->createNode('Doc');
-        $txn->fts()->index($nodeId, "common term document number {$i}");
+        $nodeId = $txn->graph()->createNode('Doc', ['body' => "common term document number {$i}"]);
         $nodeIds[] = $nodeId;
     }
 });
 
-$results = $db->fts()->search('common', limit: 5);
+$results = $db->fts()->search('Doc', 'body', 'common', limit: 5);
 $count = count($results);
 echo "  Indexed: 20 docs\n";
 echo "  Search 'common' limit 5: got {$count} results\n";
@@ -52,6 +52,7 @@ section("Test 2: Scale up — indexing in batches, timing each");
 $db->close();
 foreach (glob(DB_PATH . '*') as $f) @unlink($f);
 $db = Database::open(DB_PATH, ['create' => true]);
+$db->fts()->createIndex('Doc', 'body');
 
 $batchSize = 100;
 $totalIndexed = 0;
@@ -76,8 +77,7 @@ while ($totalIndexed < $maxDocs) {
         for ($i = 0; $i < $batchSize; $i++) {
             $id = $totalIndexed + $i;
             $text = "Ticket #{$id}: " . $texts[$id % count($texts)];
-            $nodeId = $txn->graph()->createNode('Doc');
-            $txn->fts()->index($nodeId, $text);
+            $txn->graph()->createNode('Doc', ['body' => $text]);
         }
     });
     $ms = timer_ms($t);
@@ -99,7 +99,7 @@ if ($totalIndexed >= $maxDocs) {
 
 // Quick search test
 $t = timer_start();
-$results = $db->fts()->search('internet connection', limit: 10);
+$results = $db->fts()->search('Doc', 'body', 'internet connection', limit: 10);
 $ms = timer_ms($t);
 echo "\n  Search after {$totalIndexed} docs: {$ms}ms, " . count($results) . " results\n";
 
