@@ -19,7 +19,11 @@ class QueryBuilderTest extends TestCase
     public function testBindReturnsSelf(): void
     {
         $ref = new \ReflectionMethod(QueryBuilder::class, 'bind');
-        $returnType = $ref->getReturnType();
-        $this->assertSame(QueryBuilder::class, $returnType->getName());
+        $name = $ref->getReturnType()->getName();
+        // PHP < 8.5 reports a `self` return type as "self", 8.5+ resolves it to the class name.
+        if ($name === 'self') {
+            $name = $ref->getDeclaringClass()->getName();
+        }
+        $this->assertSame(QueryBuilder::class, $name);
     }
 }
