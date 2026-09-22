@@ -187,23 +187,36 @@ $db->transaction(function ($txn) {
 
 ### Full-Text Search
 
+Since LatticeDB 0.15, full-text search runs over declared `(label, property)` indexes. Declare the index once; from then on every write of that property on a node with that label is indexed automatically.
+
 ```php
-// Index text for a node (in transaction)
+// Declare an index (outside of a write transaction)
+$db->fts()->createIndex('Article', 'body');
+$db->fts()->indexExists('Article', 'body'); // true
+
+// Writing the property indexes it
 $db->transaction(function ($txn) {
-    $txn->fts()->index($nodeId, 'Full text content to index');
+    $txn->graph()->createNode('Article', ['body' => 'Full text content to index']);
 });
 
 // Search
-$results = $db->fts()->search('search query', limit: 20);
+$results = $db->fts()->search('Article', 'body', 'search query', limit: 20);
 // FtsMatch[]: ->nodeId, ->score
 
 // Fuzzy search
-$results = $db->fts()->searchFuzzy('serch qury',
+$results = $db->fts()->searchFuzzy('Article', 'body', 'serch qury',
     limit: 20,
     maxDistance: 2,
     minTermLength: 4,
 );
+
+// Inside a transaction, search also sees that transaction's uncommitted writes
+$db->transaction(fn ($txn) => $txn->fts()->search('Article', 'body', 'query'));
+
+$db->fts()->dropIndex('Article', 'body');
 ```
+
+Searching a label/property pair with no declared index throws (`ErrorCode::Unsupported`) rather than returning an empty result.
 
 ### Embeddings
 
@@ -257,12 +270,13 @@ Exception hierarchy:
 
 ## Building liblattice from Source
 
-Only needed for non-Linux platforms or if you want a newer version. Requires [Zig](https://ziglang.org/):
+Only needed for non-Linux platforms or if you want a newer version. Requires [Zig](https://ziglang.org/) 0.16+:
 
 ```bash
 git clone https://github.com/jeffhajewski/latticedb.git
 cd latticedb
 zig build -Doptimize=ReleaseFast
+# Cross-compile the bundled Linux library: zig build -Dtarget=x86_64-linux-gnu -Doptimize=ReleaseFast
 # Output: zig-out/lib/liblattice.dylib (macOS) or liblattice.so (Linux)
 ```
 

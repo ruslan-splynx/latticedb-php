@@ -194,6 +194,8 @@ class LatticeLibrary
             4 => self::extractString($val->data->string_val->ptr, $val->data->string_val->len), // STRING
             5 => self::extractString($val->data->bytes_val->ptr, $val->data->bytes_val->len), // BYTES
             6 => self::vectorToPhpArray($val), // VECTOR
+            7 => self::listToPhpArray($ffi, $val->data->list_val), // LIST
+            8 => self::mapToPhpArray($ffi, $val->data->map_val), // MAP
             default => throw new \RuntimeException("Unknown lattice_value type: {$val->type}"),
         };
     }
@@ -213,6 +215,32 @@ class LatticeLibrary
         $result = [];
         for ($i = 0; $i < $dims; $i++) {
             $result[] = $val->data->vector_val->ptr[$i];
+        }
+        return $result;
+    }
+
+    private static function listToPhpArray(FFI $ffi, ?CData $list): array
+    {
+        $result = [];
+        if ($list === null) {
+            return $result;
+        }
+        for ($i = 0; $i < $list->len; $i++) {
+            $result[] = self::valueToPhp($ffi, $list->items[$i]);
+        }
+        return $result;
+    }
+
+    private static function mapToPhpArray(FFI $ffi, ?CData $map): array
+    {
+        $result = [];
+        if ($map === null) {
+            return $result;
+        }
+        for ($i = 0; $i < $map->len; $i++) {
+            $entry = $map->entries[$i];
+            $key = $entry->key_len > 0 ? self::extractString($entry->key, $entry->key_len) : '';
+            $result[$key] = self::valueToPhp($ffi, $entry->value);
         }
         return $result;
     }

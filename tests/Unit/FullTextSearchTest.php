@@ -10,7 +10,7 @@ class FullTextSearchTest extends TestCase
     public function testClassHasExpectedMethods(): void
     {
         $ref = new \ReflectionClass(FullTextSearch::class);
-        $expected = ['index', 'search', 'searchFuzzy'];
+        $expected = ['createIndex', 'dropIndex', 'indexExists', 'search', 'searchFuzzy'];
         foreach ($expected as $method) {
             $this->assertTrue($ref->hasMethod($method), "Missing method: {$method}");
         }

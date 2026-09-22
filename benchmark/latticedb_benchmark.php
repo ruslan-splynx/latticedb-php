@@ -207,6 +207,9 @@ $results['tests']['recall'] = $recallResults;
 
 section("Test 4: Full-Text Search (10k docs)");
 
+// Since LatticeDB 0.15 FTS indexes a declared (label, property); writing the property indexes it.
+$db->fts()->createIndex('Ticket', 'body');
+
 echo "Indexing 10k records for FTS... ";
 $start = timer_start();
 $recordToNode = array_flip($nodeToRecord);
@@ -214,7 +217,7 @@ foreach (array_chunk($dataset, 1000) as $batch) {
     $db->transaction(function ($txn) use ($batch, $recordToNode) {
         foreach ($batch as $r) {
             if (isset($recordToNode[$r['id']])) {
-                $txn->fts()->index($recordToNode[$r['id']], $r['text']);
+                $txn->graph()->setProperty($recordToNode[$r['id']], 'body', $r['text']);
             }
         }
     });
@@ -232,7 +235,7 @@ $ftsQueries = ['internet connection problems', 'billing payment issue', 'router 
 $ftsLatencies = [];
 foreach ($ftsQueries as $fq) {
     $t = timer_start();
-    $ftsResults = $db->fts()->search($fq, limit: 10);
+    $ftsResults = $db->fts()->search('Ticket', 'body', $fq, limit: 10);
     $ftsLatencies[] = timer_ms($t);
 }
 
@@ -247,7 +250,7 @@ $fuzzyLatencies = [];
 $fuzzyQueries = ['intenet conection', 'billin paymnt', 'routr hardwre', 'wfi sgnl', 'spd tst'];
 foreach ($fuzzyQueries as $fq) {
     $t = timer_start();
-    $db->fts()->searchFuzzy($fq, limit: 10, maxDistance: 2, minTermLength: 4);
+    $db->fts()->searchFuzzy('Ticket', 'body', $fq, limit: 10, maxDistance: 2, minTermLength: 4);
     $fuzzyLatencies[] = timer_ms($t);
 }
 sort($fuzzyLatencies);

@@ -27,7 +27,7 @@ abstract class LatticeException extends \RuntimeException
             ErrorCode::Io => new IOException($message, $code),
             ErrorCode::TxnAborted, ErrorCode::LockTimeout, ErrorCode::ReadOnly => new TransactionException($message, $code),
             ErrorCode::VersionMismatch => new ConnectionException($message, $code),
-            ErrorCode::InvalidArg => new \InvalidArgumentException($message, $code->value),
+            ErrorCode::InvalidArg, ErrorCode::ValueTooLarge => new \InvalidArgumentException($message, $code->value),
             default => new ConnectionException($message, $code),
         };
     }

@@ -19,4 +19,6 @@ enum ErrorCode: int
     case Checksum = -12;
     case OutOfMemory = -13;
     case Unsupported = -14;
+    case ValueTooLarge = -15;
+    case DatabaseLocked = -16;
 }
